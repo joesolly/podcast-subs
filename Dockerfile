@@ -29,7 +29,7 @@ ARG STABLE_TS_FORK_URL
 ARG STABLE_TS_REF
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg git \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
@@ -61,7 +61,7 @@ ARG STABLE_TS_FORK_URL
 ARG STABLE_TS_REF
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip \
+    && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip git \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
