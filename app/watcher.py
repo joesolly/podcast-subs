@@ -24,6 +24,7 @@ Env vars: see previous revision -- unchanged, plus
 """
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -50,6 +51,27 @@ LANGUAGE = os.environ.get("LANGUAGE") or None
 DEVICE = os.environ.get("DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("COMPUTE_TYPE", "int8")
 QUEUE_MAXSIZE = int(os.environ.get("QUEUE_MAXSIZE", "200"))
+
+# Each writer takes (result, out_path) and calls the matching stable-ts
+# export method. srt/vtt share one method (stable-ts distinguishes them via
+# the vtt= flag); the rest are one-to-one with a WhisperResult.to_* method.
+FORMAT_WRITERS = {
+    "srt": lambda result, path: result.to_srt_vtt(str(path), vtt=False),
+    "vtt": lambda result, path: result.to_srt_vtt(str(path), vtt=True),
+    "txt": lambda result, path: result.to_txt(str(path)),
+    "tsv": lambda result, path: result.to_tsv(str(path)),
+    "ass": lambda result, path: result.to_ass(str(path)),
+    "json": lambda result, path: path.write_text(
+        json.dumps(result.to_dict(), ensure_ascii=False), encoding="utf-8"
+    ),
+}
+
+_unsupported = set(OUTPUT_FORMATS) - FORMAT_WRITERS.keys()
+if _unsupported:
+    raise SystemExit(
+        f"Unsupported OUTPUT_FORMATS: {sorted(_unsupported)}. "
+        f"Supported: {sorted(FORMAT_WRITERS)}"
+    )
 
 
 def outputs_exist(audio_path: Path) -> bool:
@@ -96,7 +118,7 @@ class Transcriber:
         for fmt in OUTPUT_FORMATS:
             out_path = audio_path.with_suffix(f".{fmt}")
             try:
-                result.to_srt_vtt(str(out_path), vtt=(fmt == "vtt"))
+                FORMAT_WRITERS[fmt](result, out_path)
                 log.info("Wrote: %s", out_path)
             except Exception:
                 log.exception("Failed writing %s for %s", fmt, audio_path)
