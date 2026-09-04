@@ -1,8 +1,10 @@
 # podcast-subs
 
-Watches a mounted podcast directory and generates sidecar `.srt`/`.vtt`
-transcripts for new episodes using [stable-ts](https://github.com/jianfch/stable-ts)
-(faster-whisper backend). Built to sit next to an Audiobookshelf library.
+Watches a mounted podcast directory and generates sidecar transcripts (SRT
+by default, several other formats available -- see
+[Output formats](#output-formats)) for new episodes using
+[stable-ts](https://github.com/jianfch/stable-ts) (faster-whisper backend).
+Built to sit next to an Audiobookshelf library.
 
 ## Quick start
 
@@ -59,6 +61,37 @@ Both the faster-whisper model weights and the silero-vad model (used for
 voice-activity detection) are baked into the image at build time, so the
 container needs no outbound network at runtime -- only the initial image
 pull.
+
+## Output formats
+
+Set `OUTPUT_FORMATS` to a comma-separated list to control what gets written
+next to each audio file. Supported values, with approximate sizes for a
+60-minute episode (measured, not estimated -- scales roughly linearly with
+episode length):
+
+| Format | What it is                                        | ~size/hour |
+|--------|----------------------------------------------------|-----------|
+| `srt`  | Subtitles, word-level timing (default)              | ~1.3 MB   |
+| `vtt`  | WebVTT subtitles -- what browsers' `<track>` wants   | ~240 KB   |
+| `txt`  | Plain text, no timestamps -- best for full-text search (`grep`) | ~66 KB |
+| `json` | Full result: every word's timestamp + confidence, as a plain dict you can extend with your own top-level keys (tags, notes, etc.) after the fact | ~3.1 MB |
+| `tsv`  | Tab-separated timestamp/text rows                    | ~87 KB    |
+| `ass`  | Styled/karaoke-style subtitles (fonts, colors, highlighting) | ~210 KB |
+
+For example, to get playback subtitles plus something you can grep and
+later annotate:
+
+```yaml
+OUTPUT_FORMATS: srt,txt,json
+```
+
+A file is only skipped as "already done" once *every* format in
+`OUTPUT_FORMATS` exists next to it -- so decide on your format list before
+transcribing a large library. Adding a format later means every existing
+episode gets re-transcribed once to backfill it. The watcher also never
+merges into an existing sidecar file, only overwrites, so hand-added
+metadata in a `.json` file is safe as long as you don't delete it and let
+the file get reprocessed.
 
 ## Building locally
 
