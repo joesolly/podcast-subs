@@ -32,9 +32,23 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg git \
     && rm -rf /var/lib/apt/lists/*
 
+# PyPI's default `torch` wheel bundles the full CUDA runtime (~5GB of
+# nvidia-* packages + triton), even though this image only ever runs on
+# CPU. Installing the CPU-only build first stops pip from resolving that
+# GPU variant as a transitive dep of stable-ts[fw]/openai-whisper.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+    torch torchaudio
+
 RUN pip install --no-cache-dir \
     "stable-ts[fw] @ git+${STABLE_TS_FORK_URL}@${STABLE_TS_REF}" \
     watchdog
+
+# Pre-download silero-vad (used by transcribe(..., vad=True) in watcher.py)
+# so the container never needs outbound network at runtime -- it otherwise
+# lazily torch.hub.load()s this from GitHub on first transcription.
+RUN python -c "\
+import torch; \
+torch.hub.load(repo_or_dir='snakers4/silero-vad:master', model='silero_vad', trust_repo=True)"
 
 COPY --from=model-fetch /models /models
 ENV WHISPER_DOWNLOAD_ROOT=/models
@@ -68,6 +82,13 @@ RUN apt-get update \
 RUN pip3 install --no-cache-dir \
     "stable-ts[fw] @ git+${STABLE_TS_FORK_URL}@${STABLE_TS_REF}" \
     watchdog
+
+# Pre-download silero-vad (used by transcribe(..., vad=True) in watcher.py)
+# so the container never needs outbound network at runtime -- it otherwise
+# lazily torch.hub.load()s this from GitHub on first transcription.
+RUN python -c "\
+import torch; \
+torch.hub.load(repo_or_dir='snakers4/silero-vad:master', model='silero_vad', trust_repo=True)"
 
 COPY --from=model-fetch /models /models
 ENV WHISPER_DOWNLOAD_ROOT=/models
