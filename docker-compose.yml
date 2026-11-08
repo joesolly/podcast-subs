@@ -12,6 +12,9 @@ services:
     #     STABLE_TS_REF: frozen-2026-09-03   # pinned tag on the forked repo
     container_name: podcast-subs
     restart: unless-stopped
+    # Hard cap so a runaway transcription can't OOM the whole host.
+    mem_limit: 8g
+    memswap_limit: 8g
     environment:
       MODEL_SIZE: small
       OUTPUT_FORMATS: srt

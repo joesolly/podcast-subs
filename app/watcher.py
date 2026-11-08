@@ -21,13 +21,20 @@ Async producer/consumer design:
 
 Env vars: see previous revision -- unchanged, plus
   QUEUE_MAXSIZE   Max pending files held in memory at once (default: 200)
+  MAX_AUDIO_SECONDS  Files longer than this are decoded and transcribed in
+                  pieces of this length (default: 3600), so memory use is
+                  bounded by the piece size, not the file length. Whisper
+                  decodes a whole file into RAM at once; an unchunked
+                  34-hour audiobook needed ~53GB and OOM-killed the host.
 """
 
 import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
@@ -51,6 +58,7 @@ LANGUAGE = os.environ.get("LANGUAGE") or None
 DEVICE = os.environ.get("DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("COMPUTE_TYPE", "int8")
 QUEUE_MAXSIZE = int(os.environ.get("QUEUE_MAXSIZE", "200"))
+MAX_AUDIO_SECONDS = int(os.environ.get("MAX_AUDIO_SECONDS", "3600"))
 
 # Each writer takes (result, out_path) and calls the matching stable-ts
 # export method. srt/vtt share one method (stable-ts distinguishes them via
@@ -82,6 +90,15 @@ def is_audio(path: Path) -> bool:
     return path.suffix.lower() in AUDIO_EXTS
 
 
+def audio_duration(path: Path) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(path)],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    return float(out.strip())
+
+
 class Transcriber:
     """Loads the model once (lazily, on first real work) and reuses it."""
 
@@ -110,7 +127,7 @@ class Transcriber:
         self._ensure_loaded()
         log.info("Transcribing: %s", audio_path)
         try:
-            result = self._model.transcribe(str(audio_path), language=LANGUAGE, vad=True)
+            result = self._transcribe_chunked(audio_path)
         except Exception:
             log.exception("Transcription failed for %s", audio_path)
             return
@@ -122,6 +139,34 @@ class Transcriber:
                 log.info("Wrote: %s", out_path)
             except Exception:
                 log.exception("Failed writing %s for %s", fmt, audio_path)
+
+
+    def _transcribe_chunked(self, audio_path: Path):
+        import stable_whisper
+
+        duration = audio_duration(audio_path)
+        if duration <= MAX_AUDIO_SECONDS:
+            return self._model.transcribe(str(audio_path), language=LANGUAGE, vad=True)
+
+        log.info("%s is %.0fs long; transcribing in %ds pieces", audio_path, duration, MAX_AUDIO_SECONDS)
+        # ponytail: hard cuts at piece boundaries can clip a word; add overlap if it matters.
+        # Language is auto-detected per piece unless LANGUAGE is set (set it for non-English audiobooks).
+        segments, language = [], None
+        with tempfile.TemporaryDirectory() as tmp:
+            for n, offset in enumerate(range(0, int(duration) + 1, MAX_AUDIO_SECONDS)):
+                piece = Path(tmp) / "piece.wav"
+                subprocess.run(
+                    ["ffmpeg", "-v", "error", "-y", "-ss", str(offset), "-t", str(MAX_AUDIO_SECONDS),
+                     "-i", str(audio_path), "-vn", "-ac", "1", "-ar", "16000", str(piece)],
+                    check=True,
+                )
+                result = self._model.transcribe(str(piece), language=LANGUAGE, vad=True)
+                language = language or result.language
+                result.offset_time(offset)
+                segments += result.to_dict()["segments"]
+                piece.unlink()
+                log.info("Piece %d done (%d/%.0fs)", n + 1, min(offset + MAX_AUDIO_SECONDS, duration), duration)
+        return stable_whisper.WhisperResult({"language": language, "segments": segments})
 
 
 class AsyncWatcher:

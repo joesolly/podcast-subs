@@ -57,6 +57,13 @@ The scan streams into a bounded `asyncio.Queue` (`QUEUE_MAXSIZE`, default
 library won't spike memory, and transcription of the first file starts
 immediately rather than waiting for the whole scan to finish.
 
+Files longer than `MAX_AUDIO_SECONDS` (default 3600) are decoded and
+transcribed in pieces of that length and merged into one transcript, so
+memory use depends on the piece size, not the file length. Whisper
+otherwise decodes the whole file into RAM at once -- a 34-hour audiobook
+needed ~53GB. Set `LANGUAGE` for non-English audiobooks, since each piece
+is otherwise language-detected separately.
+
 Both the faster-whisper model weights and the silero-vad model (used for
 voice-activity detection) are baked into the image at build time, so the
 container needs no outbound network at runtime -- only the initial image
